@@ -12,12 +12,14 @@ import (
 )
 
 type Config struct {
-	Mysqldb Mysqldb      `yaml:""mysql`
-	Redis   Redis        `yaml:""redis`
-	Logger  Logger       `yaml:""logger`
-	Server  Server       `yaml:""server`
-	XxlJob  XxlJobConfig `yaml:""xxlJob`
-	File    File         `yaml:""file`
+	Mysqldb     Mysqldb             `yaml:"mysql"`
+	Redis       Redis               `yaml:"redis"`
+	Logger      Logger              `yaml:"logger"`
+	Server      Server              `yaml:"server"`
+	XxlJob      XxlJobConfig        `yaml:"xxlJob"`
+	File        File                `yaml:"file"`
+	AI          AIConfig            `yaml:"ai"`
+	SpotFilters map[string][]string `yaml:"spot_filters"`
 }
 
 type Server struct {
@@ -31,11 +33,13 @@ type Mysqldb struct {
 	Username string `yaml:"username"`
 	Password string `yaml:"password"`
 }
+
 type Redis struct {
 	Host     string `yaml:"host"`
 	Port     string `yaml:"port"`
 	Password string `yaml:"password"`
 	DBname   string `yaml:"dbname"`
+	PoolSize int    `yaml:"pool_size"`
 }
 
 type Logger struct {
@@ -62,42 +66,36 @@ type File struct {
 	ExternalPath string `yaml:"externalPath"`
 }
 
-func Init() {
+type AIConfig struct {
+	Provider string `yaml:"provider"`
+	ApiKey   string `yaml:"api_key"`
+	Url      string `yaml:"url"`
+	Model    string `yaml:"model"`
+}
+
+func New() (*Config, error) {
 	if err := godotenv.Load(); err != nil {
 		log.Printf("Error loading .env file: %v", err)
 	}
-}
-func replaceEnvVariables(value string) string {
-	return os.Expand(value, func(key string) string {
-		return os.Getenv(key)
-	})
-}
-func NewConfigFromPath(path ...string) (*Config, error) {
-	pathStr := ""
-	if isEmptyStringArray(path) {
-		dir, err := os.Getwd()
-		if err != nil {
-			return nil, err
-		}
-		pathStr = dir
-		viper.SetConfigName("config")
-		viper.AddConfigPath(pathStr)
-		zap.S.Infof("路径将会从 %s:%s 加载", pathStr, "config.yaml")
-	} else {
-		pathStr = path[0]
-		viper.SetConfigFile(pathStr)
-		zap.S.Infof("路径将会从 %s 加载", pathStr)
+
+	dir, err := os.Getwd()
+	if err != nil {
+		return nil, err
 	}
+
+	viper.SetConfigName("config")
+	viper.AddConfigPath(dir)
 	viper.SetConfigType("yaml")
 	viper.AutomaticEnv()
-	err := viper.ReadInConfig()
+
+	err = viper.ReadInConfig()
 	if err != nil {
 		zap.S().Errorf("Error reading config file: %v", zap.Error(err))
 		return nil, err
 	}
-	viper.AllKeys()
-	for _, v := range viper.AllKeys() {
-		value = viper.GetString(v)
+
+	for _, key := range viper.AllKeys() {
+		value := viper.GetString(key)
 		if value == "" {
 			continue
 		}
@@ -106,11 +104,12 @@ func NewConfigFromPath(path ...string) (*Config, error) {
 		replacedValue = strings.ReplaceAll(replacedValue, "'", "")
 		replacedValue = strings.ReplaceAll(replacedValue, "\"", "")
 		viper.Set(key, replacedValue)
-}
-potFilters := make(map[string][]string, 0)
+	}
+
+	spotFilters := make(map[string][]string)
 	err = viper.UnmarshalKey("spot_filters", &spotFilters)
 	if err != nil {
-		zap.L().Error("unmarshal contract-role error: ", zap.Error(err))
+		zap.L().Error("unmarshal spot_filters error: ", zap.Error(err))
 	}
 
 	mc := &Config{}
@@ -121,21 +120,20 @@ potFilters := make(map[string][]string, 0)
 	}
 
 	mc.SpotFilters = spotFilters
-	return mc, nil
-		
+
+	mc.AI = AIConfig{
+		ApiKey: viper.GetString("AI_API_KEY"),
+		Url:    viper.GetString("AI_BASE_URL"),
+		Model:  viper.GetString("AI_MODEL"),
 	}
 
+	return mc, nil
 }
-func isEmptyStringArray(arr []string) bool {
-	for len(arr) == 0 {
-		return true
-	}
-	for _, v := range arr {
-		if strings.TrimSpace(v) != "" {
-			return false
-		}
-	}
-	return true
+
+func replaceEnvVariables(value string) string {
+	return os.Expand(value, func(key string) string {
+		return os.Getenv(key)
+	})
 }
 
 func trimSpace(s string) string {
