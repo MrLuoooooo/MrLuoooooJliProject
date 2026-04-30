@@ -12,42 +12,42 @@ import (
 )
 
 type Config struct {
-	Mysqldb     Mysqldb             `yaml:"mysql"`
-	Redis       Redis               `yaml:"redis"`
-	Logger      Logger              `yaml:"logger"`
-	Server      Server              `yaml:"server"`
-	XxlJob      XxlJobConfig        `yaml:"xxlJob"`
-	File        File                `yaml:"file"`
-	AI          AIConfig            `yaml:"ai"`
-	SpotFilters map[string][]string `yaml:"spot_filters"`
+	Mysqldb     Mysqldb             `yaml:"mysql" mapstructure:"mysql"`
+	Redis       Redis               `yaml:"redis" mapstructure:"redis"`
+	Logger      Logger              `yaml:"logger" mapstructure:"logger"`
+	Server      Server              `yaml:"server" mapstructure:"server"`
+	XxlJob      XxlJobConfig        `yaml:"xxlJob" mapstructure:"xxlJob"`
+	File        File                `yaml:"file" mapstructure:"file"`
+	AI          AIConfig            `yaml:"ai" mapstructure:"ai"`
+	SpotFilters map[string][]string `yaml:"spot_filters" mapstructure:"spot_filters"`
 }
 
 type Server struct {
-	Prot string `yaml:"port"`
+	Prot string `yaml:"port" mapstructure:"port"`
 }
 
 type Mysqldb struct {
-	Host     string `yaml:"host"`
-	Port     string `yaml:"port"`
-	Dbname   string `yaml:"dbname"`
-	Username string `yaml:"username"`
-	Password string `yaml:"password"`
+	Host     string `yaml:"host" mapstructure:"host"`
+	Port     string `yaml:"port" mapstructure:"port"`
+	Dbname   string `yaml:"dbname" mapstructure:"dbname"`
+	Username string `yaml:"username" mapstructure:"username"`
+	Password string `yaml:"password" mapstructure:"password"`
 }
 
 type Redis struct {
-	Host     string `yaml:"host"`
-	Port     string `yaml:"port"`
-	Password string `yaml:"password"`
-	DBname   string `yaml:"dbname"`
-	PoolSize int    `yaml:"pool_size"`
+	Host     string `yaml:"host" mapstructure:"host"`
+	Port     string `yaml:"port" mapstructure:"port"`
+	Password string `yaml:"password" mapstructure:"password"`
+	DBname   string `yaml:"dbname" mapstructure:"dbname"`
+	PoolSize int    `yaml:"pool_size" mapstructure:"pool_size"`
 }
 
 type Logger struct {
-	FileName   string `yaml:"fileName"`
-	Path       string `yaml:"path"`
-	MaxAge     int    `yaml:"maxAge"`
-	MaxSize    int    `yaml:"maxSize"`
-	MaxBackups int    `yaml:"maxBackups"`
+	FileName   string `yaml:"fileName" mapstructure:"fileName"`
+	Path       string `yaml:"path" mapstructure:"path"`
+	MaxAge     int    `yaml:"maxAge" mapstructure:"maxAge"`
+	MaxSize    int    `yaml:"maxSize" mapstructure:"maxSize"`
+	MaxBackups int    `yaml:"maxBackups" mapstructure:"maxBackups"`
 }
 
 type XxlJobConfig struct {
@@ -90,9 +90,11 @@ func New() (*Config, error) {
 
 	err = viper.ReadInConfig()
 	if err != nil {
-		zap.S().Errorf("Error reading config file: %v", zap.Error(err))
+		log.Printf("Error reading config file: %v", err)
 		return nil, err
 	}
+
+	log.Printf("Config file loaded from: %s", viper.ConfigFileUsed())
 
 	for _, key := range viper.AllKeys() {
 		value := viper.GetString(key)
@@ -118,6 +120,8 @@ func New() (*Config, error) {
 		zap.L().Error("unmarshal error: ", zap.Error(err))
 		return nil, err
 	}
+
+	log.Printf("MySQL Config: host=%s, port=%s, dbname=%s", mc.Mysqldb.Host, mc.Mysqldb.Port, mc.Mysqldb.Dbname)
 
 	mc.SpotFilters = spotFilters
 

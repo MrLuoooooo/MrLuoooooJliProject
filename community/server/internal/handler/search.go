@@ -25,7 +25,15 @@ func (h *SearchHandler) SearchPosts(c *gin.Context) {
 		return
 	}
 
-	result, err := h.searchService.SearchPosts(&req)
+	var result *model.SearchResponse
+	var err error
+
+	if req.Type == "user" {
+		result, err = h.searchService.SearchUsers(&req)
+	} else {
+		result, err = h.searchService.SearchPosts(&req)
+	}
+
 	if err != nil {
 		response.ErrorWithMsg(c, response.CodeServerBusy, err.Error())
 		return

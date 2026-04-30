@@ -5,6 +5,8 @@ import (
 
 	"community-server/DB/mysql"
 	"community-server/internal/model"
+
+	"go.uber.org/zap"
 )
 
 type PostService struct{}
@@ -30,9 +32,11 @@ func (s *PostService) CreatePost(userID uint, req *model.CreatePostRequest) (uin
 
 	result := mysql.DB.Create(&post)
 	if result.Error != nil {
+		zap.S().Error("发布帖子失败", "userId", userID, "title", req.Title, "error", result.Error)
 		return 0, errors.New("发布帖子失败")
 	}
 
+	zap.S().Info("发布帖子成功", "postId", post.ID, "userId", userID, "title", req.Title)
 	return post.ID, nil
 }
 
@@ -151,6 +155,7 @@ func (s *PostService) DeletePost(userID, postID uint) error {
 
 	mysql.DB.Model(&post).Update("status", 2)
 
+	zap.S().Info("删除帖子成功", "postId", postID, "userId", userID)
 	return nil
 }
 

@@ -63,6 +63,49 @@ func (s *SearchService) SearchPosts(req *model.SearchRequest) (*model.SearchResp
 
 	return &model.SearchResponse{
 		Total: total,
-		Items: items,
+		Type:  "post",
+		Posts: items,
+	}, nil
+}
+
+func (s *SearchService) SearchUsers(req *model.SearchRequest) (*model.SearchResponse, error) {
+	var users []mysql.User
+	var total int64
+
+	query := mysql.DB.Model(&mysql.User{}).
+		Where("status = 1 AND (username LIKE ? OR nickname LIKE ? OR bio LIKE ?)",
+			"%"+req.Keyword+"%", "%"+req.Keyword+"%", "%"+req.Keyword+"%")
+
+	query.Count(&total)
+
+	offset := (req.Page - 1) * req.PageSize
+	if offset < 0 {
+		offset = 0
+	}
+
+	result := query.Order("created_at DESC").
+		Offset(offset).
+		Limit(req.PageSize).
+		Find(&users)
+
+	if result.Error != nil {
+		return nil, errors.New("搜索失败")
+	}
+
+	items := make([]model.SearchUser, 0, len(users))
+	for _, user := range users {
+		items = append(items, model.SearchUser{
+			ID:       user.ID,
+			Username: user.Username,
+			Nickname: user.Nickname,
+			Avatar:   user.Avatar,
+			Bio:      user.Bio,
+		})
+	}
+
+	return &model.SearchResponse{
+		Total: total,
+		Type:  "user",
+		Users: items,
 	}, nil
 }

@@ -13,8 +13,8 @@ import (
 )
 
 type AISearchHandler struct {
-	aiEngine       ai.Engine
-	searchService  *service.SearchService
+	aiEngine      ai.Engine
+	searchService *service.SearchService
 }
 
 func NewAISearchHandler(aiEngine ai.Engine, searchService *service.SearchService) *AISearchHandler {
@@ -51,7 +51,7 @@ func (h *AISearchHandler) AISearch(c *gin.Context) {
 		result, err := h.searchService.SearchPosts(searchReq)
 		if err == nil && result != nil {
 			total += result.Total
-			allPosts = append(allPosts, result.Items...)
+			allPosts = append(allPosts, result.Posts...)
 		}
 	}
 
@@ -129,7 +129,7 @@ func (h *AISearchHandler) AISearchStream(c *gin.Context) {
 		}
 		result, err := h.searchService.SearchPosts(searchReq)
 		if err == nil && result != nil {
-			allPosts = append(allPosts, result.Items...)
+			allPosts = append(allPosts, result.Posts...)
 		}
 	}
 

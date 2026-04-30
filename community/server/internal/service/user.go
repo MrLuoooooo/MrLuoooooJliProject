@@ -9,6 +9,8 @@ import (
 	"community-server/DB/mysql"
 	"community-server/internal/model"
 	"community-server/pkg/jwt"
+
+	"go.uber.org/zap"
 )
 
 type UserService struct{}
@@ -33,14 +35,20 @@ func (s *UserService) Register(req *model.RegisterRequest) (uint, error) {
 
 	hashedPassword := hashPassword(req.Password)
 
+	adminType := 0
+	if req.AdminType == 1 {
+		adminType = 1
+	}
+
 	user := mysql.User{
-		Username: req.Username,
-		Password: hashedPassword,
-		Email:    req.Email,
-		Nickname: req.Nickname,
-		Avatar:   "",
-		Bio:      "",
-		Status:   1,
+		Username:  req.Username,
+		Password:  hashedPassword,
+		Email:     req.Email,
+		Nickname:  req.Nickname,
+		Avatar:    "",
+		Bio:       "",
+		AdminType: adminType,
+		Status:    1,
 	}
 
 	if user.Nickname == "" {
@@ -49,9 +57,11 @@ func (s *UserService) Register(req *model.RegisterRequest) (uint, error) {
 
 	result = mysql.DB.Create(&user)
 	if result.Error != nil {
+		zap.S().Error("用户注册失败", "username", req.Username, "error", result.Error)
 		return 0, errors.New("注册失败")
 	}
 
+	zap.S().Info("用户注册成功", "userId", user.ID, "username", req.Username, "adminType", adminType)
 	return user.ID, nil
 }
 
@@ -68,11 +78,14 @@ func (s *UserService) Login(req *model.LoginRequest) (*model.LoginResponse, erro
 
 	token, err := jwt.GenerateToken(user.ID, user.Username)
 	if err != nil {
+		zap.S().Error("生成令牌失败", "userId", user.ID, "error", err)
 		return nil, errors.New("生成令牌失败")
 	}
 
 	now := time.Now()
 	mysql.DB.Model(&user).Update("last_login", &now)
+
+	zap.S().Info("用户登录成功", "userId", user.ID, "username", user.Username)
 
 	return &model.LoginResponse{
 		Token:    token,

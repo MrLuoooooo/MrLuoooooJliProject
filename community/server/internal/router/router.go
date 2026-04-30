@@ -25,6 +25,9 @@ type RouterParams struct {
 	AIHandler       *handler.AIHandler
 	SearchHandler   *handler.SearchHandler
 	AISearchHandler *handler.AISearchHandler
+	AdminHandler    *handler.AdminHandler
+	FollowHandler   *handler.FollowHandler
+	MessageHandler  *handler.MessageHandler
 	AIEngine        ai.Engine
 }
 
@@ -70,6 +73,19 @@ func NewRouter(params RouterParams) *gin.Engine {
 			protected.POST("/posts/:id/tags", params.TagHandler.AddPostTags)
 			protected.DELETE("/posts/:id/tags/:tag_id", params.TagHandler.RemovePostTag)
 			protected.GET("/posts/:id/tags", params.TagHandler.GetPostTags)
+
+			protected.POST("/follows", params.FollowHandler.FollowUser)
+			protected.DELETE("/follows/:id", params.FollowHandler.UnfollowUser)
+			protected.GET("/follows/followers", params.FollowHandler.GetFollowers)
+			protected.GET("/follows/following", params.FollowHandler.GetFollowing)
+			protected.GET("/follows/:id/status", params.FollowHandler.IsFollowing)
+			protected.GET("/follows/:id/counts", params.FollowHandler.GetFollowCounts)
+
+			protected.POST("/messages", params.MessageHandler.SendMessage)
+			protected.GET("/messages", params.MessageHandler.GetMessageList)
+			protected.GET("/messages/conversations", params.MessageHandler.GetConversationList)
+			protected.GET("/messages/unread", params.MessageHandler.GetUnreadCount)
+			protected.PUT("/messages/:id/read", params.MessageHandler.MarkAsRead)
 		}
 
 		api.GET("/comments", params.CommentHandler.GetCommentList)
@@ -82,6 +98,19 @@ func NewRouter(params RouterParams) *gin.Engine {
 		}
 
 		api.GET("/search", params.SearchHandler.SearchPosts)
+
+		admin := api.Group("/admin")
+		admin.Use(middleware.JWTAuth())
+		admin.Use(middleware.AdminAuth())
+		{
+			admin.GET("/users", params.AdminHandler.GetUserList)
+			admin.DELETE("/users/:id", params.AdminHandler.DeleteUser)
+			admin.PUT("/users/:id/admin_type", params.AdminHandler.UpdateUserAdminType)
+			admin.PUT("/users/:id/status", params.AdminHandler.UpdateUserStatus)
+
+			admin.GET("/posts", params.AdminHandler.GetPostList)
+			admin.DELETE("/posts/:id", params.AdminHandler.DeletePost)
+		}
 	}
 
 	return r

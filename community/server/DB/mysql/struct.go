@@ -19,6 +19,7 @@ type User struct {
 	Nickname  string     `gorm:"type:varchar(50)" json:"nickname"`
 	Avatar    string     `gorm:"type:varchar(255)" json:"avatar"`
 	Bio       string     `gorm:"type:varchar(500)" json:"bio"`
+	AdminType int        `gorm:"default:0" json:"admin_type"`
 	Status    int        `gorm:"default:1" json:"status"`
 	LastLogin *time.Time `json:"last_login"`
 }
@@ -111,4 +112,26 @@ type PostTag struct {
 
 func (PostTag) TableName() string {
 	return "post_tags"
+}
+
+type UserFollow struct {
+	BaseModel
+	UserID   uint `gorm:"uniqueIndex:idx_user_follow;not null" json:"user_id"`
+	FollowID uint `gorm:"uniqueIndex:idx_user_follow;not null" json:"follow_id"`
+}
+
+func (UserFollow) TableName() string {
+	return "user_follows"
+}
+
+type Message struct {
+	BaseModel
+	SenderID   uint   `gorm:"index;not null" json:"sender_id"`
+	ReceiverID uint   `gorm:"index;not null" json:"receiver_id"`
+	Content    string `gorm:"type:text;not null" json:"content"`
+	IsRead     bool   `gorm:"default:false" json:"is_read"`
+}
+
+func (Message) TableName() string {
+	return "messages"
 }

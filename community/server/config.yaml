@@ -1,0 +1,35 @@
+mysql:
+  host: 192.168.11.56
+  port: 3306
+  dbname: community
+  username: root
+  password: example
+
+server:
+  port: 1807
+
+logger:
+  fileName: "community.log"
+  path: "./logs/"
+  maxAge: 7
+  maxSize: 100
+  maxBackups: 10
+
+ai:
+  provider: "siliconflow"
+  api_key: "sk-你的硅基流动Key"
+  url: "https://api.siliconflow.cn/v1/chat/completions"
+  model: "Qwen3-8B-Instruct"
+
+redis:
+  host: ""
+  port: ""
+  password: ""
+  dbname: ""
+  pool_size: 10
+
+file:
+  path: "./uploads/"
+  externalPath: "/uploads/"
+
+spot_filters: {}

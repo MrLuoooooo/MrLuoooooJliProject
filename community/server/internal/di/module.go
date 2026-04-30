@@ -49,6 +49,9 @@ var ServiceModule = fx.Options(
 		service.NewCommentService,
 		service.NewTagService,
 		service.NewSearchService,
+		service.NewAdminService,
+		service.NewFollowService,
+		service.NewMessageService,
 	),
 )
 
@@ -61,6 +64,9 @@ var HandlerModule = fx.Options(
 		handler.NewAIHandler,
 		handler.NewSearchHandler,
 		handler.NewAISearchHandler,
+		handler.NewAdminHandler,
+		handler.NewFollowHandler,
+		handler.NewMessageHandler,
 	),
 )
 

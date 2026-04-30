@@ -51,6 +51,8 @@ func AutoMigrate(db *gorm.DB) error {
 		&CommentLike{},
 		&Tag{},
 		&PostTag{},
+		&UserFollow{},
+		&Message{},
 	)
 }
 
