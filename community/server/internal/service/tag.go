@@ -3,245 +3,148 @@ package service
 import (
 	"errors"
 
-	"community-server/DB/mysql"
+	"community-server/internal/db/mysql"
 	"community-server/internal/model"
+	"community-server/internal/repository"
 )
 
-type TagService struct{}
+type TagService struct {
+	tagRepo     repository.TagRepository
+	postTagRepo repository.PostTagRepository
+	postRepo    repository.PostRepository
+	userRepo    repository.UserRepository
+}
 
-func NewTagService() *TagService {
-	return &TagService{}
+func NewTagService(
+	tagRepo repository.TagRepository,
+	postTagRepo repository.PostTagRepository,
+	postRepo repository.PostRepository,
+	userRepo repository.UserRepository,
+) *TagService {
+	return &TagService{tagRepo: tagRepo, postTagRepo: postTagRepo, postRepo: postRepo, userRepo: userRepo}
 }
 
 func (s *TagService) CreateTag(req *model.CreateTagRequest) (uint, error) {
-	var existingTag mysql.Tag
-	result := mysql.DB.Where("name = ?", req.Name).First(&existingTag)
-	if result.Error == nil {
+	if _, err := s.tagRepo.FindByName(req.Name); err == nil {
 		return 0, errors.New("标签已存在")
 	}
-
-	tag := mysql.Tag{
-		Name:        req.Name,
-		Description: req.Description,
-		PostCount:   0,
-		Status:      1,
-	}
-
-	result = mysql.DB.Create(&tag)
-	if result.Error != nil {
+	tag := mysql.Tag{Name: req.Name, Description: req.Description, Status: 1}
+	if err := s.tagRepo.Create(&tag); err != nil {
 		return 0, errors.New("创建标签失败")
 	}
-
 	return tag.ID, nil
 }
 
 func (s *TagService) GetTagList(req *model.TagListRequest) (*model.TagListResponse, error) {
-	var tags []mysql.Tag
-	var total int64
-
-	query := mysql.DB.Model(&mysql.Tag{}).Where("status != 2")
-
-	query.Count(&total)
-
-	offset := (req.Page - 1) * req.PageSize
-	if offset < 0 {
-		offset = 0
-	}
-
-	result := query.Order("post_count DESC, created_at DESC").
-		Offset(offset).
-		Limit(req.PageSize).
-		Find(&tags)
-
-	if result.Error != nil {
+	tags, total, err := s.tagRepo.List(req.Page, req.PageSize)
+	if err != nil {
 		return nil, errors.New("获取标签列表失败")
 	}
-
 	items := make([]model.TagResponse, 0, len(tags))
-	for _, tag := range tags {
+	for _, t := range tags {
 		items = append(items, model.TagResponse{
-			ID:          tag.ID,
-			Name:        tag.Name,
-			Description: tag.Description,
-			PostCount:   tag.PostCount,
-			Status:      tag.Status,
-			CreatedAt:   tag.CreatedAt.Format("2006-01-02 15:04:05"),
+			ID: t.ID, Name: t.Name, Description: t.Description, PostCount: t.PostCount,
 		})
 	}
-
-	return &model.TagListResponse{
-		Total: total,
-		Items: items,
-	}, nil
+	return &model.TagListResponse{Total: total, Items: items}, nil
 }
 
 func (s *TagService) UpdateTag(tagID uint, req *model.UpdateTagRequest) error {
-	var tag mysql.Tag
-	result := mysql.DB.Where("id = ?", tagID).First(&tag)
-	if result.Error != nil {
+	if _, err := s.tagRepo.FindByID(tagID); err != nil {
 		return errors.New("标签不存在")
 	}
-
-	updates := map[string]interface{}{}
-	if req.Name != "" {
-		updates["name"] = req.Name
-	}
-	if req.Description != "" {
-		updates["description"] = req.Description
-	}
-
-	if len(updates) > 0 {
-		mysql.DB.Model(&tag).Updates(updates)
-	}
-
-	return nil
+	return s.tagRepo.Update(tagID, map[string]interface{}{"name": req.Name, "description": req.Description})
 }
 
 func (s *TagService) DeleteTag(tagID uint) error {
-	var tag mysql.Tag
-	result := mysql.DB.Where("id = ?", tagID).First(&tag)
-	if result.Error != nil {
+	if _, err := s.tagRepo.FindByID(tagID); err != nil {
 		return errors.New("标签不存在")
 	}
-
-	mysql.DB.Model(&tag).Update("status", 2)
-
-	mysql.DB.Where("tag_id = ?", tagID).Delete(&mysql.PostTag{})
-
-	return nil
+	return s.tagRepo.Delete(tagID)
 }
 
 func (s *TagService) AddPostTags(postID uint, tagIDs []uint) error {
-	var post mysql.Post
-	result := mysql.DB.Where("id = ? AND status != 2", postID).First(&post)
-	if result.Error != nil {
-		return errors.New("帖子不存在")
+	for _, tid := range tagIDs {
+		if err := s.postTagRepo.Create(&mysql.PostTag{PostID: postID, TagID: tid}); err != nil {
+			return err
+		}
+		s.tagRepo.IncrementPostCount(tid, 1)
 	}
-
-	for _, tagID := range tagIDs {
-		var tag mysql.Tag
-		result = mysql.DB.Where("id = ? AND status != 2", tagID).First(&tag)
-		if result.Error != nil {
-			continue
-		}
-
-		var existingPostTag mysql.PostTag
-		result = mysql.DB.Where("post_id = ? AND tag_id = ?", postID, tagID).First(&existingPostTag)
-		if result.Error == nil {
-			continue
-		}
-
-		postTag := mysql.PostTag{
-			PostID: postID,
-			TagID:  tagID,
-		}
-
-		mysql.DB.Create(&postTag)
-		mysql.DB.Model(&tag).UpdateColumn("post_count", tag.PostCount+1)
-	}
-
 	return nil
 }
 
 func (s *TagService) RemovePostTag(postID, tagID uint) error {
-	var postTag mysql.PostTag
-	result := mysql.DB.Where("post_id = ? AND tag_id = ?", postID, tagID).First(&postTag)
-	if result.Error != nil {
-		return errors.New("标签关联不存在")
+	if err := s.postTagRepo.Delete(postID, tagID); err != nil {
+		return err
 	}
-
-	mysql.DB.Delete(&postTag)
-
-	var tag mysql.Tag
-	mysql.DB.Where("id = ?", tagID).First(&tag)
-	if tag.PostCount > 0 {
-		mysql.DB.Model(&tag).UpdateColumn("post_count", tag.PostCount-1)
-	}
-
+	s.tagRepo.IncrementPostCount(tagID, -1)
 	return nil
 }
 
 func (s *TagService) GetPostTags(postID uint) ([]model.TagResponse, error) {
-	var postTags []mysql.PostTag
-	result := mysql.DB.Where("post_id = ?", postID).Find(&postTags)
-	if result.Error != nil {
-		return nil, errors.New("获取标签失败")
+	pts, err := s.postTagRepo.FindByPostID(postID)
+	if err != nil {
+		return nil, err
 	}
-
-	tags := make([]model.TagResponse, 0, len(postTags))
-	for _, postTag := range postTags {
-		var tag mysql.Tag
-		mysql.DB.Where("id = ?", postTag.TagID).First(&tag)
-
-		tags = append(tags, model.TagResponse{
-			ID:          tag.ID,
-			Name:        tag.Name,
-			Description: tag.Description,
-			PostCount:   tag.PostCount,
-			Status:      tag.Status,
-			CreatedAt:   tag.CreatedAt.Format("2006-01-02 15:04:05"),
+	tagIDs := make([]uint, len(pts))
+	for i, pt := range pts {
+		tagIDs[i] = pt.TagID
+	}
+	// batch load tags via repo
+	tags, _ := s.tagRepo.FindByIDs(tagIDs)
+	items := make([]model.TagResponse, 0, len(tags))
+	for _, t := range tags {
+		items = append(items, model.TagResponse{
+			ID: t.ID, Name: t.Name, Description: t.Description, PostCount: t.PostCount,
 		})
 	}
-
-	return tags, nil
+	return items, nil
 }
 
 func (s *TagService) GetPostsByTag(tagID uint, page, pageSize int) (*model.PostListResponse, error) {
-	var tag mysql.Tag
-	result := mysql.DB.Where("id = ? AND status != 2", tagID).First(&tag)
-	if result.Error != nil {
-		return nil, errors.New("标签不存在")
+	pts, _, err := s.postTagRepo.FindByTagID(tagID, page, pageSize)
+	if err != nil {
+		return nil, err
 	}
-
-	var postTags []mysql.PostTag
-	var total int64
-
-	query := mysql.DB.Model(&mysql.PostTag{}).Where("tag_id = ?", tagID)
-	query.Count(&total)
-
-	offset := (page - 1) * pageSize
-	if offset < 0 {
-		offset = 0
+	if len(pts) == 0 {
+		return &model.PostListResponse{Total: 0, Items: []model.PostListItem{}}, nil
 	}
-
-	result = query.Order("created_at DESC").
-		Offset(offset).
-		Limit(pageSize).
-		Find(&postTags)
-
-	if result.Error != nil {
-		return nil, errors.New("获取帖子列表失败")
+	postIDs := make([]uint, len(pts))
+	for i, pt := range pts {
+		postIDs[i] = pt.PostID
 	}
-
-	items := make([]model.PostListItem, 0, len(postTags))
-	for _, postTag := range postTags {
-		var post mysql.Post
-		mysql.DB.Where("id = ? AND status != 2", postTag.PostID).First(&post)
-
-		var user mysql.User
-		mysql.DB.Where("id = ?", post.UserID).First(&user)
-
+	posts, _, err := s.postRepo.List(repository.PostListQuery{
+		Page: 1, PageSize: len(postIDs), StatusExclude: 2,
+	})
+	postMap := make(map[uint]mysql.Post)
+	for _, p := range posts {
+		postMap[p.ID] = p
+	}
+	// collect user IDs
+	userIDs := make([]uint, 0, len(postMap))
+	for _, p := range postMap {
+		userIDs = append(userIDs, p.UserID)
+	}
+	users, _ := s.userRepo.FindByIDs(userIDs)
+	userMap := make(map[uint]mysql.User)
+	for _, u := range users {
+		userMap[u.ID] = u
+	}
+	items := make([]model.PostListItem, 0, len(postIDs))
+	for _, pid := range postIDs {
+		p, ok := postMap[pid]
+		if !ok {
+			continue
+		}
+		u := userMap[p.UserID]
 		items = append(items, model.PostListItem{
-			ID:           post.ID,
-			UserID:       post.UserID,
-			Username:     user.Username,
-			Nickname:     user.Nickname,
-			Title:        post.Title,
-			Summary:      post.Summary,
-			CoverImage:   post.CoverImage,
-			CategoryID:   post.CategoryID,
-			Status:       post.Status,
-			ViewCount:    post.ViewCount,
-			LikeCount:    post.LikeCount,
-			CommentCount: post.CommentCount,
-			IsTop:        post.IsTop,
-			IsEssence:    post.IsEssence,
-			CreatedAt:    post.CreatedAt.Format("2006-01-02 15:04:05"),
+			ID: p.ID, UserID: p.UserID, Username: u.Username, Nickname: u.Nickname,
+			Title: p.Title, Summary: p.Summary, CoverImage: p.CoverImage,
+			CategoryID: p.CategoryID, Status: p.Status,
+			ViewCount: p.ViewCount, LikeCount: p.LikeCount, CommentCount: p.CommentCount,
+			IsTop: p.IsTop, IsEssence: p.IsEssence,
+			CreatedAt: p.CreatedAt.Format("2006-01-02 15:04:05"),
 		})
 	}
-
-	return &model.PostListResponse{
-		Total: total,
-		Items: items,
-	}, nil
+	return &model.PostListResponse{Total: int64(len(items)), Items: items}, nil
 }

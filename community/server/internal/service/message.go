@@ -3,131 +3,114 @@ package service
 import (
 	"errors"
 
-	"community-server/DB/mysql"
+	"community-server/internal/db/mysql"
+	"community-server/internal/im"
 	"community-server/internal/model"
+	"community-server/internal/repository"
+	"community-server/internal/ws"
 
 	"go.uber.org/zap"
 )
 
-type MessageService struct{}
+type MessageService struct {
+	imClient    im.IMClient
+	msgRepo     repository.MessageRepository
+	userRepo    repository.UserRepository
+	wsManager   *ws.Manager
+}
 
-func NewMessageService() *MessageService {
-	return &MessageService{}
+func NewMessageService(imClient im.IMClient, msgRepo repository.MessageRepository, userRepo repository.UserRepository, wsManager *ws.Manager) *MessageService {
+	return &MessageService{imClient: imClient, msgRepo: msgRepo, userRepo: userRepo, wsManager: wsManager}
 }
 
 func (s *MessageService) SendMessage(senderID uint, req *model.SendMessageRequest) error {
 	if senderID == req.ReceiverID {
 		return errors.New("不能给自己发消息")
 	}
-
-	var receiver mysql.User
-	if err := mysql.DB.First(&receiver, req.ReceiverID).Error; err != nil {
+	if _, err := s.userRepo.FindByID(req.ReceiverID); err != nil {
 		return errors.New("用户不存在")
 	}
-
 	message := mysql.Message{
-		SenderID:   senderID,
-		ReceiverID: req.ReceiverID,
-		Content:    req.Content,
-		IsRead:     false,
+		SenderID: senderID, ReceiverID: req.ReceiverID, Content: req.Content, IsRead: false,
 	}
-
-	if err := mysql.DB.Create(&message).Error; err != nil {
+	if err := s.msgRepo.Create(&message); err != nil {
 		zap.S().Error("发送消息失败", "senderId", senderID, "receiverId", req.ReceiverID, "error", err)
 		return errors.New("发送消息失败")
 	}
-
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				zap.S().Error("IM推送消息 panic", "error", r)
+			}
+		}()
+		if err := s.imClient.SendPrivateMsg(im.UserIDToStr(senderID), im.UserIDToStr(req.ReceiverID), req.Content); err != nil {
+			zap.S().Warn("IM推送消息失败（不影响本地存储）", "error", err)
+		}
+	}()
 	zap.S().Info("发送消息成功", "senderId", senderID, "receiverId", req.ReceiverID, "messageId", message.ID)
+	s.wsManager.SendToUser(req.ReceiverID, ws.PushMessage{
+		Type: "message",
+		Data: map[string]interface{}{
+			"message_id":  message.ID,
+			"sender_id":   senderID,
+			"receiver_id": req.ReceiverID,
+			"content":     req.Content,
+		},
+	})
 	return nil
 }
 
 func (s *MessageService) GetMessageList(req *model.MessageListRequest) (*model.MessageListResponse, error) {
 	var messages []mysql.Message
 	var total int64
-
-	query := mysql.DB.Model(&mysql.Message{})
+	var err error
 	if req.SenderID > 0 && req.ReceiverID > 0 {
-		query = query.Where("(sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?)",
-			req.SenderID, req.ReceiverID, req.ReceiverID, req.SenderID)
-	} else if req.ReceiverID > 0 {
-		query = query.Where("receiver_id = ?", req.ReceiverID)
+		messages, total, err = s.msgRepo.FindByConversation(req.SenderID, req.ReceiverID, req.Page, req.PageSize)
+	} else {
+		messages, total, err = s.msgRepo.FindReceived(req.ReceiverID, req.Page, req.PageSize)
 	}
-
-	query.Count(&total)
-
-	offset := (req.Page - 1) * req.PageSize
-	if offset < 0 {
-		offset = 0
-	}
-
-	result := query.Order("created_at DESC").
-		Offset(offset).
-		Limit(req.PageSize).
-		Find(&messages)
-
-	if result.Error != nil {
+	if err != nil {
 		return nil, errors.New("获取消息列表失败")
 	}
-
 	items := make([]model.MessageInfo, 0, len(messages))
-	for _, msg := range messages {
-		var sender mysql.User
-		mysql.DB.Where("id = ?", msg.SenderID).First(&sender)
-
-		createdAt := ""
-		if !msg.CreatedAt.IsZero() {
-			createdAt = msg.CreatedAt.Format("2006-01-02 15:04:05")
+	if len(messages) > 0 {
+		userIDs := make([]uint, len(messages))
+		for i, msg := range messages {
+			userIDs[i] = msg.SenderID
 		}
-
-		items = append(items, model.MessageInfo{
-			ID:         msg.ID,
-			SenderID:   msg.SenderID,
-			ReceiverID: msg.ReceiverID,
-			SenderName: sender.Username,
-			Content:    msg.Content,
-			IsRead:     msg.IsRead,
-			CreatedAt:  createdAt,
-		})
+		users, _ := s.userRepo.FindByIDs(userIDs)
+		userMap := make(map[uint]mysql.User, len(users))
+		for _, u := range users {
+			userMap[u.ID] = u
+		}
+		for _, msg := range messages {
+			sender := userMap[msg.SenderID]
+			createdAt := ""
+			if !msg.CreatedAt.IsZero() {
+				createdAt = msg.CreatedAt.Format("2006-01-02 15:04:05")
+			}
+			items = append(items, model.MessageInfo{
+				ID: msg.ID, SenderID: msg.SenderID, ReceiverID: msg.ReceiverID,
+				SenderName: sender.Username, Content: msg.Content, IsRead: msg.IsRead, CreatedAt: createdAt,
+			})
+		}
 	}
-
-	return &model.MessageListResponse{
-		Total: total,
-		Items: items,
-	}, nil
+	return &model.MessageListResponse{Total: total, Items: items}, nil
 }
 
 func (s *MessageService) GetUnreadCount(userID uint) (int64, error) {
-	var count int64
-	result := mysql.DB.Model(&mysql.Message{}).
-		Where("receiver_id = ? AND is_read = ?", userID, false).
-		Count(&count)
-
-	if result.Error != nil {
-		return 0, errors.New("获取未读消息数失败")
-	}
-
-	return count, nil
+	return s.msgRepo.CountUnread(userID)
 }
 
-func (s *MessageService) MarkAsRead(messageID uint, userID uint) error {
-	result := mysql.DB.Model(&mysql.Message{}).
-		Where("id = ? AND receiver_id = ?", messageID, userID).
-		Update("is_read", true)
-
-	if result.Error != nil {
-		return errors.New("标记已读失败")
-	}
-
-	return nil
+func (s *MessageService) MarkAsRead(messageID, userID uint) error {
+	return s.msgRepo.MarkAsRead(messageID, userID)
 }
 
 func (s *MessageService) GetConversationList(userID uint) (*model.ConversationListResponse, error) {
-	var messages []mysql.Message
-	mysql.DB.Where("sender_id = ? OR receiver_id = ?", userID, userID).
-		Order("created_at DESC").
-		Find(&messages)
-
+	messages, _ := s.msgRepo.FindConversationMessages(userID)
 	conversations := make(map[uint]*model.ConversationInfo)
+	otherIDs := make([]uint, 0)
+
 	for _, msg := range messages {
 		var otherID uint
 		if msg.SenderID == userID {
@@ -135,29 +118,35 @@ func (s *MessageService) GetConversationList(userID uint) (*model.ConversationLi
 		} else {
 			otherID = msg.SenderID
 		}
-
 		if _, exists := conversations[otherID]; !exists {
-			var user mysql.User
-			mysql.DB.Where("id = ?", otherID).First(&user)
+			conversations[otherID] = &model.ConversationInfo{UserID: otherID}
+			otherIDs = append(otherIDs, otherID)
+		}
+	}
 
-			createdAt := ""
-			if !msg.CreatedAt.IsZero() {
-				createdAt = msg.CreatedAt.Format("2006-01-02 15:04:05")
+	if len(otherIDs) > 0 {
+		users, _ := s.userRepo.FindByIDs(otherIDs)
+		userMap := make(map[uint]mysql.User, len(users))
+		for _, u := range users {
+			userMap[u.ID] = u
+		}
+		unreadMap, _ := s.msgRepo.CountUnreadBySenders(userID, otherIDs)
+
+		for _, msg := range messages {
+			var otherID uint
+			if msg.SenderID == userID {
+				otherID = msg.ReceiverID
+			} else {
+				otherID = msg.SenderID
 			}
-
-			var unreadCount int64
-			mysql.DB.Model(&mysql.Message{}).
-				Where("sender_id = ? AND receiver_id = ? AND is_read = ?", otherID, userID, false).
-				Count(&unreadCount)
-
-			conversations[otherID] = &model.ConversationInfo{
-				UserID:      otherID,
-				Username:    user.Username,
-				Nickname:    user.Nickname,
-				Avatar:      user.Avatar,
-				LastMessage: msg.Content,
-				LastTime:    createdAt,
-				UnreadCount: unreadCount,
+			conv := conversations[otherID]
+			if u, ok := userMap[otherID]; ok && conv.Username == "" {
+				conv.Username = u.Username; conv.Nickname = u.Nickname; conv.Avatar = u.Avatar
+			}
+			conv.UnreadCount = unreadMap[otherID]
+			conv.LastMessage = msg.Content
+			if !msg.CreatedAt.IsZero() {
+				conv.LastTime = msg.CreatedAt.Format("2006-01-02 15:04:05")
 			}
 		}
 	}
@@ -166,8 +155,5 @@ func (s *MessageService) GetConversationList(userID uint) (*model.ConversationLi
 	for _, conv := range conversations {
 		items = append(items, *conv)
 	}
-
-	return &model.ConversationListResponse{
-		Items: items,
-	}, nil
+	return &model.ConversationListResponse{Items: items}, nil
 }

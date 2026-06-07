@@ -16,20 +16,6 @@ type CommentListRequest struct {
 	PageSize int  `form:"page_size,default=20"`
 }
 
-type CommentResponse struct {
-	ID        uint   `json:"id"`
-	UserID    uint   `json:"user_id"`
-	Username  string `json:"username"`
-	Nickname  string `json:"nickname"`
-	Avatar    string `json:"avatar"`
-	PostID    uint   `json:"post_id"`
-	ParentID  uint   `json:"parent_id"`
-	Content   string `json:"content"`
-	Status    int    `json:"status"`
-	LikeCount int    `json:"like_count"`
-	CreatedAt string `json:"created_at"`
-}
-
 type CommentListItem struct {
 	ID         uint            `json:"id"`
 	UserID     uint            `json:"user_id"`

@@ -4,26 +4,23 @@ import (
 	"log"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/joho/godotenv"
 	"github.com/spf13/viper"
-	"go.uber.org/zap"
 )
 
 type Config struct {
-	Mysqldb     Mysqldb             `yaml:"mysql" mapstructure:"mysql"`
-	Redis       Redis               `yaml:"redis" mapstructure:"redis"`
-	Logger      Logger              `yaml:"logger" mapstructure:"logger"`
-	Server      Server              `yaml:"server" mapstructure:"server"`
-	XxlJob      XxlJobConfig        `yaml:"xxlJob" mapstructure:"xxlJob"`
-	File        File                `yaml:"file" mapstructure:"file"`
-	AI          AIConfig            `yaml:"ai" mapstructure:"ai"`
-	SpotFilters map[string][]string `yaml:"spot_filters" mapstructure:"spot_filters"`
+	Mysqldb Mysqldb  `yaml:"mysql" mapstructure:"mysql"`
+	Redis   Redis    `yaml:"redis" mapstructure:"redis"`
+	Logger  Logger   `yaml:"logger" mapstructure:"logger"`
+	Server  Server   `yaml:"server" mapstructure:"server"`
+	File    File     `yaml:"file" mapstructure:"file"`
+	AI      AIConfig `yaml:"ai" mapstructure:"ai"`
+	IM      IMConfig `yaml:"im" mapstructure:"im"`
 }
 
 type Server struct {
-	Prot string `yaml:"port" mapstructure:"port"`
+	Port string `yaml:"port" mapstructure:"port"`
 }
 
 type Mysqldb struct {
@@ -50,27 +47,21 @@ type Logger struct {
 	MaxBackups int    `yaml:"maxBackups" mapstructure:"maxBackups"`
 }
 
-type XxlJobConfig struct {
-	IsEnable    bool          `yaml:"isEnable"`
-	ServerAddrs []string      `yaml:"serverAddrs"`
-	AccessToken string        `yaml:"accessToken"`
-	AppName     string        `yaml:"appName"`
-	ClientPort  int           `yaml:"clientPort"`
-	Timeout     time.Duration `yaml:"timeout"`
-	BeatTime    time.Duration `yaml:"beatTime"`
-	LogLevel    int           `yaml:"logLevel"`
-}
-
 type File struct {
 	Path         string `yaml:"path"`
 	ExternalPath string `yaml:"externalPath"`
 }
 
+type IMConfig struct {
+	BaseURL   string `yaml:"base_url"`
+	AppKey    string `yaml:"app_key"`
+	AppSecret string `yaml:"app_secret"`
+}
+
 type AIConfig struct {
-	Provider string `yaml:"provider"`
-	ApiKey   string `yaml:"api_key"`
-	Url      string `yaml:"url"`
-	Model    string `yaml:"model"`
+	ApiKey string `yaml:"api_key"`
+	Url    string `yaml:"url"`
+	Model  string `yaml:"model"`
 }
 
 func New() (*Config, error) {
@@ -108,22 +99,14 @@ func New() (*Config, error) {
 		viper.Set(key, replacedValue)
 	}
 
-	spotFilters := make(map[string][]string)
-	err = viper.UnmarshalKey("spot_filters", &spotFilters)
-	if err != nil {
-		zap.L().Error("unmarshal spot_filters error: ", zap.Error(err))
-	}
-
 	mc := &Config{}
 	err = viper.Unmarshal(&mc)
 	if err != nil {
-		zap.L().Error("unmarshal error: ", zap.Error(err))
+		log.Printf("unmarshal error: %v", err)
 		return nil, err
 	}
 
 	log.Printf("MySQL Config: host=%s, port=%s, dbname=%s", mc.Mysqldb.Host, mc.Mysqldb.Port, mc.Mysqldb.Dbname)
-
-	mc.SpotFilters = spotFilters
 
 	mc.AI = AIConfig{
 		ApiKey: viper.GetString("AI_API_KEY"),
@@ -136,6 +119,13 @@ func New() (*Config, error) {
 
 func replaceEnvVariables(value string) string {
 	return os.Expand(value, func(key string) string {
+		if idx := strings.Index(key, ":-"); idx != -1 {
+			env := os.Getenv(key[:idx])
+			if env != "" {
+				return env
+			}
+			return key[idx+2:]
+		}
 		return os.Getenv(key)
 	})
 }

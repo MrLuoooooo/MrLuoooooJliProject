@@ -2,13 +2,19 @@ package router
 
 import (
 	"context"
+	"net/http"
+	"time"
 
 	"community-server/internal/ai"
 	"community-server/internal/config"
 	"community-server/internal/handler"
-	"community-server/middleware"
+	"community-server/internal/middleware"
+	"community-server/internal/ws"
 
 	"github.com/gin-gonic/gin"
+	swaggerFiles "github.com/swaggo/files"
+	ginSwagger "github.com/swaggo/gin-swagger"
+	_ "community-server/docs"
 	"go.uber.org/fx"
 	"go.uber.org/zap"
 )
@@ -16,36 +22,65 @@ import (
 type RouterParams struct {
 	fx.In
 
-	Config          *config.Config
-	Logger          *zap.Logger
-	UserHandler     *handler.UserHandler
-	PostHandler     *handler.PostHandler
-	CommentHandler  *handler.CommentHandler
-	TagHandler      *handler.TagHandler
-	AIHandler       *handler.AIHandler
-	SearchHandler   *handler.SearchHandler
-	AISearchHandler *handler.AISearchHandler
-	AdminHandler    *handler.AdminHandler
-	FollowHandler   *handler.FollowHandler
-	MessageHandler  *handler.MessageHandler
-	AIEngine        ai.Engine
+	Config              *config.Config
+	Logger              *zap.Logger
+	UserHandler         *handler.UserHandler
+	PostHandler         *handler.PostHandler
+	CommentHandler      *handler.CommentHandler
+	TagHandler          *handler.TagHandler
+	CategoryHandler     *handler.CategoryHandler
+	NotificationHandler *handler.NotificationHandler
+	UploadHandler       *handler.UploadHandler
+	StatusHandler       *handler.StatusHandler
+	BotWebhookHandler   *handler.BotWebhookHandler
+	AIHandler           *handler.AIHandler
+	SearchHandler       *handler.SearchHandler
+	AISearchHandler     *handler.AISearchHandler
+	AdminHandler        *handler.AdminHandler
+	FollowHandler       *handler.FollowHandler
+	MessageHandler      *handler.MessageHandler
+	AIEngine            ai.Engine
+	WSManager           *ws.Manager
 }
 
 func NewRouter(params RouterParams) *gin.Engine {
 	r := gin.Default()
 
+	r.Use(middleware.CORSMiddleware())
 	r.Use(middleware.MetricsMiddleware())
 	r.Use(middleware.RateLimitMiddleware(middleware.NewRateLimiter(), 100, 10))
+
+	// 健康检查
+	r.GET("/health", func(c *gin.Context) {
+		c.JSON(200, gin.H{
+			"status":  "ok",
+			"service": "community-server",
+		})
+	})
+
+	// Swagger 文档
+	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+
+	// WebSocket
+	r.GET("/ws", ws.Handler(params.WSManager))
 
 	api := r.Group("/api/v1")
 	{
 		api.POST("/users/register", params.UserHandler.Register)
 		api.POST("/users/login", params.UserHandler.Login)
+		api.POST("/users/forgot-password", params.UserHandler.ForgotPassword)
+		api.POST("/users/reset-password", params.UserHandler.ResetPassword)
 		api.GET("/posts", params.PostHandler.GetPostList)
 		api.GET("/posts/:id", params.PostHandler.GetPost)
 		api.GET("/users/:user_id/posts", params.PostHandler.GetUserPosts)
+		api.GET("/users/:user_id/favorites", params.PostHandler.GetUserFavorites)
+		api.GET("/users/:user_id/likes", params.PostHandler.GetUserLikedPosts)
 		api.GET("/tags", params.TagHandler.GetTagList)
 		api.GET("/tags/:id/posts", params.TagHandler.GetPostsByTag)
+		api.GET("/categories", params.CategoryHandler.GetList)
+		api.GET("/categories/:id", params.CategoryHandler.GetByID)
+		api.GET("/users/:user_id/online", params.StatusHandler.GetOnlineStatus)
+		api.POST("/users/online/batch", params.StatusHandler.BatchOnlineStatus)
 
 		protected := api.Group("")
 		protected.Use(middleware.JWTAuth())
@@ -56,6 +91,7 @@ func NewRouter(params RouterParams) *gin.Engine {
 			protected.POST("/posts", params.PostHandler.CreatePost)
 			protected.PUT("/posts/:id", params.PostHandler.UpdatePost)
 			protected.DELETE("/posts/:id", params.PostHandler.DeletePost)
+			protected.GET("/posts/feed", params.PostHandler.GetFollowFeed)
 			protected.POST("/posts/:id/like", params.PostHandler.LikePost)
 			protected.DELETE("/posts/:id/like", params.PostHandler.UnlikePost)
 			protected.POST("/posts/:id/favorite", params.PostHandler.FavoritePost)
@@ -86,6 +122,13 @@ func NewRouter(params RouterParams) *gin.Engine {
 			protected.GET("/messages/conversations", params.MessageHandler.GetConversationList)
 			protected.GET("/messages/unread", params.MessageHandler.GetUnreadCount)
 			protected.PUT("/messages/:id/read", params.MessageHandler.MarkAsRead)
+
+			protected.POST("/upload", params.UploadHandler.Upload)
+
+			protected.GET("/notifications", params.NotificationHandler.GetList)
+			protected.PUT("/notifications/:id/read", params.NotificationHandler.MarkRead)
+			protected.PUT("/notifications/read-all", params.NotificationHandler.MarkAllRead)
+			protected.GET("/notifications/unread", params.NotificationHandler.GetUnreadCount)
 		}
 
 		api.GET("/comments", params.CommentHandler.GetCommentList)
@@ -110,30 +153,62 @@ func NewRouter(params RouterParams) *gin.Engine {
 
 			admin.GET("/posts", params.AdminHandler.GetPostList)
 			admin.DELETE("/posts/:id", params.AdminHandler.DeletePost)
+			admin.PUT("/posts/:id/top", params.AdminHandler.SetPostTop)
+			admin.PUT("/posts/:id/essence", params.AdminHandler.SetPostEssence)
+
+			admin.POST("/categories", params.CategoryHandler.Create)
+			admin.PUT("/categories/:id", params.CategoryHandler.Update)
+			admin.DELETE("/categories/:id", params.CategoryHandler.Delete)
+			admin.POST("/broadcast", params.AdminHandler.SendBroadcast)
+			admin.GET("/stats", params.AdminHandler.GetStats)
 		}
+
+		// Bot Webhook — JuggleIM 回调
+		api.POST("/bot/webhook", params.BotWebhookHandler.Webhook)
+	}
+
+	// 静态文件服务（上传目录）
+	uploadDir := params.Config.File.Path
+	if uploadDir != "" {
+		r.Static("/uploads", uploadDir)
 	}
 
 	return r
 }
 
 func RegisterRoutes(lc fx.Lifecycle, r *gin.Engine, cfg *config.Config, logger *zap.Logger) {
+	var srv *http.Server
+
 	lc.Append(fx.Hook{
 		OnStart: func(ctx context.Context) error {
-			addr := ":" + cfg.Server.Prot
+			addr := ":" + cfg.Server.Port
 			if addr == ":" {
 				addr = ":8080"
 			}
 			logger.Info("Starting server", zap.String("addr", addr))
+
+			srv = &http.Server{
+				Addr:    addr,
+				Handler: r,
+			}
+
 			go func() {
-				if err := r.Run(addr); err != nil {
+				logger.Info("Server is listening", zap.String("addr", addr))
+				if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 					logger.Error("Failed to start server", zap.Error(err))
 				}
 			}()
+
 			return nil
 		},
 		OnStop: func(ctx context.Context) error {
-			logger.Info("Stopping server")
-			return nil
+			if srv == nil {
+				return nil
+			}
+			logger.Info("Shutting down server...")
+			shutdownCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			defer cancel()
+			return srv.Shutdown(shutdownCtx)
 		},
 	})
 }

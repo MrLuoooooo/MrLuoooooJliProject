@@ -2,7 +2,7 @@ package model
 
 type AdminUserListRequest struct {
 	Page     int `form:"page,default=1"`
-	PageSize int `form:"page_size,default=20"`
+	PageSize int `form:"page_size,default=20" binding:"max=100"`
 }
 
 type AdminUserListResponse struct {
@@ -13,8 +13,8 @@ type AdminUserListResponse struct {
 type AdminUserInfo struct {
 	ID        uint   `json:"id"`
 	Username  string `json:"username"`
-	Email     string `json:"email"`
-	Phone     string `json:"phone"`
+	Email     *string `json:"email"`
+	Phone     *string `json:"phone"`
 	Nickname  string `json:"nickname"`
 	Avatar    string `json:"avatar"`
 	AdminType int    `json:"admin_type"`
@@ -24,7 +24,7 @@ type AdminUserInfo struct {
 
 type AdminPostListRequest struct {
 	Page     int `form:"page,default=1"`
-	PageSize int `form:"page_size,default=20"`
+	PageSize int `form:"page_size,default=20" binding:"max=100"`
 }
 
 type AdminPostListResponse struct {
@@ -51,4 +51,13 @@ type UpdateUserAdminTypeRequest struct {
 
 type UpdateUserStatusRequest struct {
 	Status int `json:"status" binding:"required,oneof=0 1"`
+}
+
+type AdminStatsResponse struct {
+	TotalUsers    int64 `json:"total_users"`
+	NewUsersToday int64 `json:"new_users_today"`
+	TotalPosts    int64 `json:"total_posts"`
+	PostsToday    int64 `json:"posts_today"`
+	TotalComments int64 `json:"total_comments"`
+	OnlineCount   int64 `json:"online_count"`
 }

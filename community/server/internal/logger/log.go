@@ -11,15 +11,6 @@ import (
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
-func NewLogger(cfg *config.Config) *zap.Logger {
-	writeSyncer := getLogWriter(&cfg.Logger)
-	encoder := getEncoder()
-	core := zapcore.NewCore(encoder, writeSyncer, zapcore.DebugLevel)
-	logger := zap.New(core, zap.AddStacktrace(zapcore.WarnLevel), zap.AddCaller())
-	zap.ReplaceGlobals(logger)
-	return logger
-}
-
 func InitLogger(c *config.Config) {
 	writeSyncer := getLogWriter(&c.Logger)
 	encoder := getEncoder()
@@ -39,10 +30,10 @@ func getEncoder() zapcore.Encoder {
 }
 
 func getLogWriter(c *config.Logger) zapcore.WriteSyncer {
-	return zapcore.AddSync(NewMultiWrite(c))
+	return zapcore.AddSync(newMultiWrite(c))
 }
 
-func NewMultiWrite(c *config.Logger) io.Writer {
+func newMultiWrite(c *config.Logger) io.Writer {
 	lumberJackLogger := &lumberjack.Logger{
 		Filename:   c.Path + c.FileName,
 		MaxSize:    c.MaxSize,

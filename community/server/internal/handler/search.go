@@ -2,22 +2,31 @@ package handler
 
 import (
 	"community-server/internal/model"
-	"community-server/internal/service"
 	"community-server/pkg/response"
 
 	"github.com/gin-gonic/gin"
 )
 
 type SearchHandler struct {
-	searchService *service.SearchService
+	searchService SearchService
 }
 
-func NewSearchHandler(searchService *service.SearchService) *SearchHandler {
+func NewSearchHandler(searchService SearchService) *SearchHandler {
 	return &SearchHandler{
 		searchService: searchService,
 	}
 }
 
+// SearchPosts 搜索
+// @Summary 搜索
+// @Tags 搜索
+// @Produce json
+// @Param keyword query string true "关键词"
+// @Param type query string false "类型: post, user" default(post)
+// @Param page query int false "页码" default(1)
+// @Param page_size query int false "每页数量" default(20)
+// @Success 200 {object} response.Response
+// @Router /search [get]
 func (h *SearchHandler) SearchPosts(c *gin.Context) {
 	var req model.SearchRequest
 	if err := c.ShouldBindQuery(&req); err != nil {

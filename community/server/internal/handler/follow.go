@@ -4,25 +4,36 @@ import (
 	"strconv"
 
 	"community-server/internal/model"
-	"community-server/internal/service"
 	"community-server/pkg/response"
 
 	"github.com/gin-gonic/gin"
 )
 
 type FollowHandler struct {
-	followService *service.FollowService
+	followService FollowService
 }
 
-func NewFollowHandler(followService *service.FollowService) *FollowHandler {
+func NewFollowHandler(followService FollowService) *FollowHandler {
 	return &FollowHandler{
 		followService: followService,
 	}
 }
 
+// FollowUser 关注用户
+// @Summary 关注用户
+// @Tags 关注
+// @Security BearerAuth
+// @Accept json
+// @Produce json
+// @Param body body model.FollowRequest true "关注目标"
+// @Success 200 {object} response.Response
+// @Router /follows [post]
 func (h *FollowHandler) FollowUser(c *gin.Context) {
-	userID, _ := c.Get("user_id")
-
+	userID, exists := c.Get("user_id")
+	if !exists {
+		response.Error(c, response.CodeUnauthorized)
+		return
+	}
 	var req model.FollowRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.ErrorWithMsg(c, response.CodeInvalidParam, "参数错误")
@@ -37,8 +48,20 @@ func (h *FollowHandler) FollowUser(c *gin.Context) {
 	response.Success(c, nil)
 }
 
+// UnfollowUser 取消关注
+// @Summary 取消关注
+// @Tags 关注
+// @Security BearerAuth
+// @Produce json
+// @Param id path uint true "被关注用户ID"
+// @Success 200 {object} response.Response
+// @Router /follows/{id} [delete]
 func (h *FollowHandler) UnfollowUser(c *gin.Context) {
-	userID, _ := c.Get("user_id")
+	userID, exists := c.Get("user_id")
+	if !exists {
+		response.Error(c, response.CodeUnauthorized)
+		return
+	}
 	followIDStr := c.Param("id")
 
 	followID, err := strconv.ParseUint(followIDStr, 10, 32)
@@ -55,6 +78,15 @@ func (h *FollowHandler) UnfollowUser(c *gin.Context) {
 	response.Success(c, nil)
 }
 
+// GetFollowers 粉丝列表
+// @Summary 粉丝列表
+// @Tags 关注
+// @Produce json
+// @Param user_id query uint true "用户ID"
+// @Param page query int false "页码" default(1)
+// @Param page_size query int false "每页数量" default(20)
+// @Success 200 {object} response.Response
+// @Router /follows/followers [get]
 func (h *FollowHandler) GetFollowers(c *gin.Context) {
 	var req model.FollowListRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
@@ -62,7 +94,7 @@ func (h *FollowHandler) GetFollowers(c *gin.Context) {
 		return
 	}
 
-	result, err := h.followService.GetFollowers(&req)
+	result, err := h.followService.GetFollowers(req.UserID, req.Page, req.PageSize)
 	if err != nil {
 		response.ErrorWithMsg(c, response.CodeServerBusy, err.Error())
 		return
@@ -71,6 +103,15 @@ func (h *FollowHandler) GetFollowers(c *gin.Context) {
 	response.Success(c, result)
 }
 
+// GetFollowing 关注列表
+// @Summary 关注列表
+// @Tags 关注
+// @Produce json
+// @Param user_id query uint true "用户ID"
+// @Param page query int false "页码" default(1)
+// @Param page_size query int false "每页数量" default(20)
+// @Success 200 {object} response.Response
+// @Router /follows/following [get]
 func (h *FollowHandler) GetFollowing(c *gin.Context) {
 	var req model.FollowListRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
@@ -78,7 +119,7 @@ func (h *FollowHandler) GetFollowing(c *gin.Context) {
 		return
 	}
 
-	result, err := h.followService.GetFollowing(&req)
+	result, err := h.followService.GetFollowing(req.UserID, req.Page, req.PageSize)
 	if err != nil {
 		response.ErrorWithMsg(c, response.CodeServerBusy, err.Error())
 		return
@@ -87,8 +128,20 @@ func (h *FollowHandler) GetFollowing(c *gin.Context) {
 	response.Success(c, result)
 }
 
+// IsFollowing 是否已关注
+// @Summary 关注状态
+// @Tags 关注
+// @Security BearerAuth
+// @Produce json
+// @Param id path uint true "目标用户ID"
+// @Success 200 {object} response.Response
+// @Router /follows/{id}/status [get]
 func (h *FollowHandler) IsFollowing(c *gin.Context) {
-	userID, _ := c.Get("user_id")
+	userID, exists := c.Get("user_id")
+	if !exists {
+		response.Error(c, response.CodeUnauthorized)
+		return
+	}
 	followIDStr := c.Param("id")
 
 	followID, err := strconv.ParseUint(followIDStr, 10, 32)
@@ -97,10 +150,21 @@ func (h *FollowHandler) IsFollowing(c *gin.Context) {
 		return
 	}
 
-	isFollowing, _ := h.followService.IsFollowing(userID.(uint), uint(followID))
+	isFollowing, err := h.followService.IsFollowing(userID.(uint), uint(followID))
+	if err != nil {
+		response.ErrorWithMsg(c, response.CodeServerBusy, "查询失败")
+		return
+	}
 	response.Success(c, gin.H{"is_following": isFollowing})
 }
 
+// GetFollowCounts 关注数
+// @Summary 关注统计
+// @Tags 关注
+// @Produce json
+// @Param id path uint true "用户ID"
+// @Success 200 {object} response.Response
+// @Router /follows/{id}/counts [get]
 func (h *FollowHandler) GetFollowCounts(c *gin.Context) {
 	userIDStr := c.Param("id")
 	userID, err := strconv.ParseUint(userIDStr, 10, 32)

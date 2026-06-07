@@ -1,0 +1,93 @@
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: community-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: example
+      MYSQL_DATABASE: community
+    ports:
+      - "3306:3306"
+    volumes:
+      - ./data/mysql:/var/lib/mysql
+      - ./community/init-scripts/01-im-init.sql:/docker-entrypoint-initdb.d/01-im.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: community-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - ./data/redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  im-server:
+    build:
+      context: ./im-server
+      dockerfile: Dockerfile
+    container_name: community-im
+    restart: unless-stopped
+    ports:
+      - "9001:9001"
+      - "9003:9003"
+      - "8090:8090"
+    environment:
+      MYSQL_HOST: mysql
+      MYSQL_PORT: "3306"
+      MYSQL_DBNAME: im_server
+      MYSQL_USERNAME: root
+      MYSQL_PASSWORD: example
+      KVDB_ENGINE: leveldb
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  community:
+    build:
+      context: ./community
+      dockerfile: Dockerfile
+    container_name: community-server
+    restart: unless-stopped
+    ports:
+      - "1807:1807"
+    environment:
+      MYSQL_HOST: mysql
+      MYSQL_PORT: "3306"
+      MYSQL_DBNAME: community
+      MYSQL_USERNAME: root
+      MYSQL_PASSWORD: example
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_DB: "0"
+      IM_BASE_URL: "http://im-server:9001"
+      IM_APP_KEY: "community"
+      IM_APP_SECRET: "community-secret"
+      AI_API_KEY: "${AI_API_KEY}"
+      AI_BASE_URL: "${AI_BASE_URL}"
+      AI_MODEL: "${AI_MODEL}"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      im-server:
+        condition: service_started
+
+  frontend:
+    build:
+      context: ./community/frontend
+      dockerfile: Dockerfile
+    container_name: community-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    depends_on:
+      - community

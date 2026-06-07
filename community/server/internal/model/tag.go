@@ -12,7 +12,7 @@ type UpdateTagRequest struct {
 
 type TagListRequest struct {
 	Page     int `form:"page,default=1"`
-	PageSize int `form:"page_size,default=20"`
+	PageSize int `form:"page_size,default=20" binding:"max=100"`
 }
 
 type TagResponse struct {

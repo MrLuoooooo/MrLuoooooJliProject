@@ -2,11 +2,11 @@ package handler
 
 import (
 	"context"
+	"net/http"
 	"strings"
 
 	"community-server/internal/ai"
 	"community-server/internal/model"
-	"community-server/internal/service"
 	"community-server/pkg/response"
 
 	"github.com/gin-gonic/gin"
@@ -14,10 +14,10 @@ import (
 
 type AISearchHandler struct {
 	aiEngine      ai.Engine
-	searchService *service.SearchService
+	searchService SearchService
 }
 
-func NewAISearchHandler(aiEngine ai.Engine, searchService *service.SearchService) *AISearchHandler {
+func NewAISearchHandler(aiEngine ai.Engine, searchService SearchService) *AISearchHandler {
 	return &AISearchHandler{
 		aiEngine:      aiEngine,
 		searchService: searchService,
@@ -108,6 +108,10 @@ func (h *AISearchHandler) AISearchStream(c *gin.Context) {
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
+	if _, ok := c.Writer.(http.Flusher); !ok {
+		response.ErrorWithMsg(c, response.CodeServerBusy, "当前环境不支持流式响应")
+		return
+	}
 
 	intent, err := h.aiEngine.ExtractSearchIntent(context.Background(), req.Question)
 	if err != nil {
@@ -170,7 +174,7 @@ func (h *AISearchHandler) AISearchStream(c *gin.Context) {
 		c.Writer.WriteString("event: summary_start\ndata: \n\n")
 		c.Writer.Flush()
 
-		h.aiEngine.StreamChat(context.Background(), summaryPrompt, func(chunk string, isFinish bool) {
+		err := h.aiEngine.StreamChat(context.Background(), summaryPrompt, func(chunk string, isFinish bool) {
 			if isFinish {
 				c.Writer.WriteString("event: summary_end\ndata: \n\n")
 				c.Writer.Flush()
@@ -180,5 +184,9 @@ func (h *AISearchHandler) AISearchStream(c *gin.Context) {
 			c.Writer.WriteString("event: summary_chunk\ndata: " + chunk + "\n\n")
 			c.Writer.Flush()
 		})
+		if err != nil {
+			c.Writer.WriteString("event: error\ndata: " + err.Error() + "\n\n")
+			c.Writer.Flush()
+		}
 	}
 }

@@ -2,9 +2,7 @@ package handler
 
 import (
 	"fmt"
-	"io"
 	"net/http"
-	"strings"
 
 	"community-server/internal/ai"
 	"community-server/pkg/response"
@@ -140,26 +138,4 @@ func (h *AIHandler) ChatSSE(c *gin.Context) {
 type SSEvent struct {
 	Event string `json:"event"`
 	Data  string `json:"data"`
-}
-
-func FormatSSE(data string) string {
-	lines := strings.Split(data, "\n")
-	result := ""
-	for _, line := range lines {
-		result += fmt.Sprintf("data: %s\n", line)
-	}
-	result += "\n"
-	return result
-}
-
-func SendSSEvent(w io.Writer, event, data string) {
-	fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, data)
-}
-
-func SendSSData(w io.Writer, data string) {
-	lines := strings.Split(data, "\n")
-	for _, line := range lines {
-		fmt.Fprintf(w, "data: %s\n", line)
-	}
-	fmt.Fprint(w, "\n")
 }
